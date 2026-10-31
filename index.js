@@ -34,47 +34,55 @@ function createMinecraftBot() {
 
     bot.once('spawn', () => {
         console.log(`Đã vào sảnh thành công: ${acc.username}`);
+        if (trackingChannel) {
+            trackingChannel.send(`🟢 Bot đã kết nối vào sảnh KingMC thành công với tài khoản **${acc.username}**! Đang tiến hành chọn cụm SMP King...`);
+        }
         
-        // 1. Sau 3 giây ở sảnh, tự động tìm và sử dụng đồng hồ (hoặc vật phẩm chọn server) trong thanh đồ đạc để mở menu
+        // 1. Sau 3 giây ở sảnh, mở menu bằng đồng hồ hoặc dùng lệnh /smp
         setTimeout(async () => {
             try {
                 const clockItem = bot.inventory.items().find(item => item.name.includes('clock') || item.name.includes('compass') || item.name.includes('watch'));
                 if (clockItem) {
                     await bot.equip(clockItem, 'hand');
                     bot.activateItem();
-                    console.log('Đã mở menu chọn server bằng đồng hồ!');
                 } else {
-                    console.log('Không tìm thấy đồng hồ trong tay, tiến hành dùng lệnh thay thế...');
                     bot.chat('/smp');
                 }
             } catch (err) {
-                console.log('Lỗi khi mở menu sảnh:', err);
+                console.log('Lỗi mở menu sảnh:', err);
             }
         }, 3000);
 
-        // 2. Sau khi menu mở (khoảng 5 giây), tự động chuyển vào cụm SMP King
+        // 2. Sau 5 giây chuyển vào cụm SMP King
         setTimeout(() => {
-            console.log('Đang chuyển vào cụm SMP King...');
             bot.chat('/smp');
+            if (trackingChannel) {
+                trackingChannel.send(`🔵 Đang chuyển vào cụm **SMP King**...`);
+            }
         }, 5000);
 
-        // 3. Sau khi đã vào trong server con và load map (khoảng 8 giây), tự động đăng nhập mật khẩu
+        // 3. Sau 8 giây đăng nhập mật khẩu và thông báo hoàn tất vào game
         setTimeout(() => {
-            console.log(`Đang đăng nhập mật khẩu cho ${acc.username}...`);
             bot.chat(`/login ${acc.password}`);
+            console.log(`Đã đăng nhập mật khẩu cho ${acc.username}`);
+            if (trackingChannel) {
+                trackingChannel.send(`✅ Tài khoản **${acc.username}** đã đăng nhập vào thế giới thành công! Sẵn sàng nhận lệnh.`);
+            }
         }, 8000);
     });
 
-    // Lắng nghe tin nhắn chat từ server game để báo về Discord khi pay xong
+    // Lắng nghe phản hồi từ game (báo pay, thông báo, v.v.)
     bot.on('message', (jsonMsg) => {
         const messageText = jsonMsg.toString();
-        if (trackingChannel && (messageText.toLowerCase().includes('pay') || messageText.toLowerCase().includes('thành công') || messageText.toLowerCase().includes('gửi'))) {
-            trackingChannel.send(`📥 **[Game KingMC]:** \`${messageText}\``);
+        // Lọc các tin nhắn quan trọng từ server để báo về Discord
+        if (trackingChannel && (messageText.toLowerCase().includes('pay') || messageText.toLowerCase().includes('thành công') || messageText.toLowerCase().includes('gửi') || messageText.toLowerCase().includes('không đủ'))) {
+            trackingChannel.send(`📥 **[Phản hồi từ KingMC]:** \`${messageText}\``);
         }
     });
 
     bot.on('kicked', (reason) => {
         console.log(`Bị đá ra khỏi server: ${reason}`);
+        if (trackingChannel) trackingChannel.send(`⚠️ Bot đã bị đá khỏi server với lý do: \`${reason}\``);
         stopAfkSession();
         switchAccount();
     });
@@ -97,7 +105,7 @@ function startAfkSession(channel) {
 
     // Gõ lệnh vào khu afk
     bot.chat('/afk');
-    trackingChannel.send('✅ Đã bật chế độ AFK cắm máy lấy shard trên KingMC cho tài khoản **hiz200**!');
+    trackingChannel.send('🚀 **[AFK Mode]:** Đã gõ lệnh `/afk` thành công! Bot đã đứng vào khu cắm máy nhận shard.');
 
     // Vòng lặp chống kẹt / giữ kết nối mỗi 3 phút
     if (afkInterval) clearInterval(afkInterval);
@@ -116,7 +124,7 @@ function startAfkSession(channel) {
     shardTimer = setInterval(() => {
         if (isAfkActive && trackingChannel) {
             shardCount += 10;
-            trackingChannel.send(`⏰ **Thông báo AFK (1 giờ trôi qua):** Tài khoản hiz200 đã kiếm được khoảng **${shardCount} shard** từ khu cắm máy!`);
+            trackingChannel.send(`⏰ **Thông báo AFK (1 giờ trôi qua):** Tài khoản hiz200 đã cắm máy và kiếm được khoảng **${shardCount} shard**!`);
         }
     }, 3600000);
 }
@@ -177,12 +185,12 @@ client.on('messageCreate', async (message) => {
 
         try {
             bot.chat(`?mc pay ${target} ${amount}`);
-            message.reply(`📤 Đã gửi lệnh pay **${amount}** cho **${target}** trên KingMC! Đang chờ server phản hồi...`);
+            message.reply(`📤 Đã gửi lệnh chuyển **${amount}** cho **${target}** trên KingMC! Đang đợi server xác nhận...`);
         } catch (err) {
             message.reply('Lỗi khi gửi lệnh vào game!');
         }
     }
 });
 
-client.login('MTU2NTcyMDE5OTQzMTQ1NDgwMA.GIAJv9.vNX47IGPLXbpsTkmt0keCM2vCJO-qHeax7OGi8');
-                      
+client.login(process.env.DISCORD_TOKEN);
+    

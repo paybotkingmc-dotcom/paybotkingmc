@@ -1,6 +1,7 @@
 {
   "name": "paybotkingmc",
   "version": "1.0.0",
+  "description": "Discord Bot Mineflayer AFK",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"

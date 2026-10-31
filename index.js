@@ -1,196 +1,121 @@
 const { Client, GatewayIntentBits } = require('discord.js');
 const mineflayer = require('mineflayer');
+const http = require('http');
 
+// Tạo một HTTP server nhỏ để Render nhận diện port và không bị tắt
+const server = http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('Bot Minecraft AFK is running!\n');
+});
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+  console.log(`HTTP Server đang lắng nghe trên cổng ${PORT}`);
+});
+
+// Khởi tạo Discord Bot
 const client = new Client({
-    intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent
-    ]
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent
+  ]
 });
 
-const accounts = [
-    { username: 'hiz200', password: 'hiz300' }
-];
+const TOKEN = process.env.DISCORD_TOKEN;
+const PREFIX = '!mc';
+let trackingChannelId = null; // Lưu lại kênh chat để gửi thông báo
 
-let currentAccIndex = 0;
+// Thông tin tài khoản Minecraft và Server
+const MC_CONFIG = {
+  host: 'kingmc.vn',
+  username: 'hiz200',
+  // password: 'hiz300', // Bỏ comment dòng này nếu server yêu cầu đăng nhập /login
+  version: false // Tự động nhận diện phiên bản
+};
+
 let bot = null;
-let afkInterval = null;
-let shardTimer = null;
 let shardCount = 0;
-let isAfkActive = false;
-let trackingChannel = null;
+let afkInterval = null;
 
-function createMinecraftBot() {
-    const acc = accounts[currentAccIndex];
-    console.log(`Đang kết nối vào KingMC với tài khoản: ${acc.username}...`);
-
-    bot = mineflayer.createBot({
-        host: 'kingmc.vn',
-        port: 25565,
-        username: acc.username,
-        version: false
-    });
-
-    bot.once('spawn', () => {
-        console.log(`Đã vào sảnh thành công: ${acc.username}`);
-        if (trackingChannel) {
-            trackingChannel.send(`🟢 Bot đã kết nối vào sảnh KingMC thành công với tài khoản **${acc.username}**! Đang tiến hành chọn cụm SMP King...`);
-        }
-        
-        // 1. Sau 3 giây ở sảnh, mở menu bằng đồng hồ hoặc dùng lệnh /smp
-        setTimeout(async () => {
-            try {
-                const clockItem = bot.inventory.items().find(item => item.name.includes('clock') || item.name.includes('compass') || item.name.includes('watch'));
-                if (clockItem) {
-                    await bot.equip(clockItem, 'hand');
-                    bot.activateItem();
-                } else {
-                    bot.chat('/smp');
-                }
-            } catch (err) {
-                console.log('Lỗi mở menu sảnh:', err);
-            }
-        }, 3000);
-
-        // 2. Sau 5 giây chuyển vào cụm SMP King
-        setTimeout(() => {
-            bot.chat('/smp');
-            if (trackingChannel) {
-                trackingChannel.send(`🔵 Đang chuyển vào cụm **SMP King**...`);
-            }
-        }, 5000);
-
-        // 3. Sau 8 giây đăng nhập mật khẩu và thông báo hoàn tất vào game
-        setTimeout(() => {
-            bot.chat(`/login ${acc.password}`);
-            console.log(`Đã đăng nhập mật khẩu cho ${acc.username}`);
-            if (trackingChannel) {
-                trackingChannel.send(`✅ Tài khoản **${acc.username}** đã đăng nhập vào thế giới thành công! Sẵn sàng nhận lệnh.`);
-            }
-        }, 8000);
-    });
-
-    // Lắng nghe phản hồi từ game (báo pay, thông báo, v.v.)
-    bot.on('message', (jsonMsg) => {
-        const messageText = jsonMsg.toString();
-        // Lọc các tin nhắn quan trọng từ server để báo về Discord
-        if (trackingChannel && (messageText.toLowerCase().includes('pay') || messageText.toLowerCase().includes('thành công') || messageText.toLowerCase().includes('gửi') || messageText.toLowerCase().includes('không đủ'))) {
-            trackingChannel.send(`📥 **[Phản hồi từ KingMC]:** \`${messageText}\``);
-        }
-    });
-
-    bot.on('kicked', (reason) => {
-        console.log(`Bị đá ra khỏi server: ${reason}`);
-        if (trackingChannel) trackingChannel.send(`⚠️ Bot đã bị đá khỏi server với lý do: \`${reason}\``);
-        stopAfkSession();
-        switchAccount();
-    });
-
-    bot.on('end', (reason) => {
-        console.log(`Mất kết nối: ${reason}`);
-        stopAfkSession();
-    });
-
-    bot.on('error', (err) => {
-        console.log(`Lỗi kết nối Minecraft: ${err}`);
-    });
-}
-
-function startAfkSession(channel) {
-    if (!bot) return;
-    isAfkActive = true;
-    trackingChannel = channel;
-    shardCount = 0;
-
-    // Gõ lệnh vào khu afk
-    bot.chat('/afk');
-    trackingChannel.send('🚀 **[AFK Mode]:** Đã gõ lệnh `/afk` thành công! Bot đã đứng vào khu cắm máy nhận shard.');
-
-    // Vòng lặp chống kẹt / giữ kết nối mỗi 3 phút
-    if (afkInterval) clearInterval(afkInterval);
-    afkInterval = setInterval(() => {
-        if (bot && bot.entity && isAfkActive) {
-            bot.look(bot.entity.yaw + 1.5, bot.entity.pitch, true);
-            bot.setControlState('jump', true);
-            setTimeout(() => {
-                bot.setControlState('jump', false);
-            }, 500);
-        }
-    }, 180000);
-
-    // Cứ mỗi 1 tiếng thông báo số shard kiếm được
-    if (shardTimer) clearInterval(shardTimer);
-    shardTimer = setInterval(() => {
-        if (isAfkActive && trackingChannel) {
-            shardCount += 10;
-            trackingChannel.send(`⏰ **Thông báo AFK (1 giờ trôi qua):** Tài khoản hiz200 đã cắm máy và kiếm được khoảng **${shardCount} shard**!`);
-        }
-    }, 3600000);
-}
-
-function stopAfkSession() {
-    isAfkActive = false;
-    if (afkInterval) clearInterval(afkInterval);
-    if (shardTimer) clearInterval(shardTimer);
-}
-
-function switchAccount() {
-    currentAccIndex++;
-    if (currentAccIndex < accounts.length) {
-        console.log('Đang đổi sang tài khoản dự phòng tiếp theo...');
-        setTimeout(createMinecraftBot, 5000);
-    } else {
-        console.log('Đã hết tài khoản dự phòng!');
-    }
-}
-
+// Khi Discord Bot sẵn sàng
 client.once('ready', () => {
-    console.log(`Discord Bot đã online: ${client.user.tag}`);
-    createMinecraftBot();
+  console.log(`Bot Discord đã đăng nhập thành công với tên ${client.user.tag}`);
 });
 
+// Xử lý lệnh từ Discord
 client.on('messageCreate', async (message) => {
-    if (message.author.bot) return;
+  if (message.author.bot) return;
+  if (!message.content.startsWith(PREFIX)) return;
 
-    trackingChannel = message.channel;
+  const args = message.content.slice(PREFIX.length).trim().split(/ +/);
+  const command = args.shift().toLowerCase();
 
-    // Lệnh bật AFK: ?mc afk
-    if (message.content === '?mc afk') {
-        if (!bot) return message.reply('Bot Minecraft chưa kết nối vào game!');
-        if (isAfkActive) return message.reply('Chế độ AFK đang được bật sẵn rồi bro ơi!');
-        startAfkSession(message.channel);
+  trackingChannelId = message.channel.id; // Lưu kênh hiện tại để bắn thông báo
+
+  if (command === 'afk') {
+    message.reply('Đang tiến hành kết nối tài khoản `hiz200` vào `kingmc.vn` để cắm máy...');
+    startMinecraftBot(message.channel);
+  } else if (command === 'stop') {
+    if (bot) {
+      bot.quit();
+      bot = null;
+      if (afkInterval) clearInterval(afkInterval);
+      message.reply('Đã dừng bot Minecraft thành công!');
+    } else {
+      message.reply('Bot Minecraft hiện không hoạt động.');
     }
-
-    // Lệnh tắt AFK: ?mc afk offline
-    if (message.content === '?mc afk offline') {
-        if (!isAfkActive) return message.reply('Bot hiện tại có đang AFK đâu bro!');
-        stopAfkSession();
-        message.reply('🛑 Đã tắt chế độ AFK cắm máy!');
+  } else if (command === 'status') {
+    if (bot) {
+      message.reply(`Trạng thái: Bot đang chạy trên server `kingmc.vn`. Số shard đếm được: ${shardCount}`);
+    } else {
+      message.reply('Bot Minecraft đang tắt.');
     }
-
-    // Lệnh pay: !pay [tên] [số tiền]
-    if (message.content.startsWith('!pay')) {
-        const args = message.content.split(' ');
-        const target = args[1];
-        const amount = args[2];
-
-        if (!target || !amount) {
-            return message.reply('Thiếu thông tin rồi bro! Cú pháp: `!pay [tên_game] [số_tiền]`');
-        }
-
-        if (!bot) {
-            return message.reply('Bot Minecraft chưa kết nối vào game!');
-        }
-
-        try {
-            bot.chat(`?mc pay ${target} ${amount}`);
-            message.reply(`📤 Đã gửi lệnh chuyển **${amount}** cho **${target}** trên KingMC! Đang đợi server xác nhận...`);
-        } catch (err) {
-            message.reply('Lỗi khi gửi lệnh vào game!');
-        }
-    }
+  }
 });
 
-client.login(process.env.DISCORD_TOKEN);
-    
+// Hàm khởi động Mineflayer bot
+function startMinecraftBot(channel) {
+  if (bot) {
+    try { bot.quit(); } catch (e) {}
+  }
+
+  bot = mineflayer.createBot(MC_CONFIG);
+
+  bot.on('spawn', () => {
+    console.log('Bot Minecraft đã vào game thành công!');
+    if (channel) {
+      channel.send('✅ **[THÔNG BÁO]** Tài khoản `hiz200` đã vào game thành công trên `kingmc.vn` và bắt đầu quá trình cắm máy AFK!');
+    }
+
+    // Tự động dùng đồng hồ hoặc lệnh sang SMP King sau khi vào sảnh (nếu cần)
+    setTimeout(() => {
+      bot.chat('/smp'); // Lệnh chuyển sang SMP King, ní có thể đổi lại nếu cần
+    }, 3000);
+  });
+
+  bot.on('chat', (username, message) => {
+    // Logic đếm shard hoặc đọc thông báo từ game nếu cần
+    if (username === 'Server' && message.includes('shard')) {
+      shardCount++;
+    }
+  });
+
+  bot.on('kicked', (reason) => {
+    console.log(`Bot bị kick khỏi server: ${reason}`);
+    if (channel) channel.send(`⚠️ Bot bị kick khỏi server với lý do: ${reason}`);
+  });
+
+  bot.on('end', (reason) => {
+    console.log(`Bot đã thoát, lý do: ${reason}`);
+    if (channel) channel.send(`❌ Bot đã mất kết nối, đang tự động kết nối lại...`);
+    // Tự động kết nối lại sau 10 giây
+    setTimeout(() => startMinecraftBot(channel), 10000);
+  });
+
+  bot.on('error', (err) => {
+    console.log('Lỗi Mineflayer:', err);
+  });
+}
+
+// Đăng nhập Discord Bot
+client.login(TOKEN);
